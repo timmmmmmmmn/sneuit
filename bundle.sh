@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 cargo build --release
 APP=target/Sneuit.app
 mkdir -p "$APP/Contents/MacOS"
-cp target/release/sneeuw "$APP/Contents/MacOS/sneuit"
+cp target/release/sneuit "$APP/Contents/MacOS/sneuit"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

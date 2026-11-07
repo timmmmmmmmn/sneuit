@@ -214,7 +214,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sneeuw"
+name = "sneuit"
 version = "0.1.0"
 dependencies = [
  "block2",
