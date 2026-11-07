@@ -6,8 +6,8 @@ use std::f64::consts::PI;
 use crate::world::{rnd, Particle, Pile, Rect, G};
 
 /// Na hoeveel seconden een gebouwde sneeuwpop begint te smelten, en hoe lang dat duurt.
-const MELT_START: f64 = 20.0 * 60.0;
-const MELT_TIME: f64 = 8.0 * 60.0;
+const MELT_START: f64 = 7.0 * 60.0;
+const MELT_TIME: f64 = 3.0 * 60.0;
 
 pub struct Snowman {
     pub x: f64,
@@ -95,6 +95,7 @@ pub enum Pose {
 #[derive(Clone, Copy, PartialEq)]
 enum Phase {
     RollBase,
+    Turn,
     WalkAround,
     RollMid,
     Lift,
@@ -116,6 +117,9 @@ pub struct Boy {
     pub sm: Option<Snowman>,
     phase: Phase,
     target: f64,
+    /// Waar de sneeuwpop moet komen: ergens in het midden van het scherm.
+    site: f64,
+    passes: u32,
     x2: f64,
     from: (f64, f64),
     scooped: bool,
@@ -137,6 +141,8 @@ impl Boy {
             sm: None,
             phase: Phase::RollBase,
             target: rnd(19.0, 25.0),
+            site: sc.x + sc.w * rnd(0.3, 0.7),
+            passes: 0,
             x2: 0.0,
             from: (0.0, 0.0),
             scooped: false,
@@ -169,9 +175,17 @@ impl Boy {
                 self.walk(dt, 38.0);
                 let ball = self.ball.as_mut().unwrap();
                 ball.roll(self.x + self.dir * (ball.r + 7.0), gr, true);
-                let far = if self.dir > 0.0 { sc.x + sc.w - 70.0 } else { sc.x + 70.0 };
-                if ball.r >= self.target || (ball.x - far) * self.dir >= 0.0 {
-                    let r = ball.r.max(10.0);
+                // Rol heen en weer rond de gekozen plek tot de bal groot genoeg is.
+                let past = (ball.x - self.site) * self.dir;
+                let big = ball.r >= self.target || self.passes >= 4;
+                let edge = if self.dir > 0.0 { sc.x + sc.w - 60.0 } else { sc.x + 60.0 };
+                if !big && (past > 140.0 || (ball.x - edge) * self.dir >= 0.0) {
+                    self.passes += 1;
+                    self.dir = -self.dir;
+                    self.x2 = ball.x - self.dir * (ball.r + 7.0);
+                    self.go(Phase::Turn);
+                } else if big && past >= 0.0 {
+                    let r = ball.r.max(12.0);
                     let site = ball.x;
                     self.sm = Some(Snowman::new(site, self.g, r));
                     self.ball = None;
@@ -180,6 +194,17 @@ impl Boy {
                     let side = if room > r + 160.0 { self.dir } else { -self.dir };
                     self.x2 = (site + side * (r + rnd(120.0, 170.0))).clamp(sc.x + 40.0, sc.x + sc.w - 40.0);
                     self.go(Phase::WalkAround);
+                }
+            }
+            Phase::Turn => {
+                // Om de bal heen lopen om hem de andere kant op te duwen.
+                self.pose = Pose::Walk;
+                let d = (self.x2 - self.x).signum();
+                self.x += d * 55.0 * dt;
+                self.step += 55.0 * dt * 0.22;
+                if (self.x2 - self.x).abs() < 2.0 {
+                    self.x = self.x2;
+                    self.go(Phase::RollBase);
                 }
             }
             Phase::WalkAround => {

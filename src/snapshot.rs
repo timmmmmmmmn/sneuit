@@ -19,6 +19,7 @@ pub fn run(dir: &str) {
     let mut world = World::new(vec![screen]);
     world.speed = 60.0;
     world.flake_mult = 4.0;
+    world.intensity = 1.0;
     let mut wins = vec![
         WinInfo { id: 1, x: 120.0, y: 140.0, w: 360.0, h: 260.0 },
         WinInfo { id: 2, x: 420.0, y: 230.0, w: 380.0, h: 200.0 },

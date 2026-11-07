@@ -29,7 +29,9 @@ use world::{Rect, World};
 /// Boven de menubalk en uitklapmenu's, zodat de sneeuw altijd zichtbaar is,
 /// ook met "Toon achtergrond van menubalk" aan.
 const OVERLAY_LEVEL: isize = 102;
-const FPS: f64 = 30.0;
+/// 60 keer per seconde als er iets beweegt (dan blijft de sneeuw strak op het venster),
+/// anders slaan we elke tweede tik over.
+const FPS: f64 = 60.0;
 const TILE_W: f64 = 128.0;
 const TILE_H: f64 = 32.0;
 /// Hoe vaak per seconde we vensters checken als er niets beweegt.
@@ -135,6 +137,7 @@ struct State {
     screen_check: f64,
     poll_acc: f64,
     active: f64,
+    odd: bool,
     pid: i32,
 }
 
@@ -212,6 +215,10 @@ fn tick(mtm: MainThreadMarker) {
     STATE.with(|s| {
         let mut s = s.borrow_mut();
         let Some(st) = s.as_mut() else { return };
+        st.odd = !st.odd;
+        if st.odd && st.active <= 0.0 && !st.world.actors.busy() {
+            return;
+        }
         let now = Instant::now();
         let dt = (now - st.last).as_secs_f64();
         st.last = now;
@@ -320,6 +327,7 @@ fn main() {
             screen_check: 0.0,
             poll_acc: 1.0,
             active: 0.0,
+            odd: false,
             pid: std::process::id() as i32,
         })
     });
