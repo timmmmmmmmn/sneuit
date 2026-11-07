@@ -11,6 +11,7 @@ use crate::world::Particle;
 struct Dot {
     layer: Retained<CALayer>,
     r: f64,
+    opacity: f32,
     hidden: bool,
 }
 
@@ -49,7 +50,7 @@ impl FlakeLayers {
                 layer.setBorderColor(Some(&self.edge));
                 layer.setBorderWidth(0.6);
                 self.root.addSublayer(&layer);
-                self.pool.push(Dot { layer, r: -1.0, hidden: false });
+                self.pool.push(Dot { layer, r: -1.0, opacity: 1.0, hidden: false });
             }
             let dot = &mut self.pool[k];
             let r = ((p.r + 0.6) * 4.0).round() / 4.0;
@@ -57,6 +58,12 @@ impl FlakeLayers {
                 dot.layer.setBounds(CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(2.0 * r, 2.0 * r)));
                 dot.layer.setCornerRadius(r);
                 dot.r = r;
+            }
+            // Nieuwe vlokken verschijnen niet ineens maar faden in.
+            let opacity = ((p.age / 1.2).min(1.0) * 20.0).round() as f32 / 20.0;
+            if opacity != dot.opacity {
+                dot.layer.setOpacity(opacity);
+                dot.opacity = opacity;
             }
             // Laagjes hebben hun oorsprong linksonder.
             dot.layer.setPosition(CGPoint::new(x, h - y));

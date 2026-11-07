@@ -73,12 +73,14 @@ pub struct Particle {
     pub r: f64,
     pub kind: Kind,
     pub phase: f64,
+    /// Seconden sinds het ontstaan; vlokken faden zo rustig in.
+    pub age: f64,
 }
 
 impl Particle {
     pub fn clump(x: f64, y: f64, vx: f64, vy: f64, mass: f32) -> Self {
         let r = ((mass as f64) / PI).sqrt() * 1.15 + 0.45;
-        Particle { x, y, vx, vy, mass, r, kind: Kind::Clump, phase: 0.0 }
+        Particle { x, y, vx, vy, mass, r, kind: Kind::Clump, phase: 0.0, age: 10.0 }
     }
     pub fn puff(x: f64, y: f64, vx: f64, vy: f64, mass: f32) -> Self {
         Particle { kind: Kind::Puff, ..Particle::clump(x, y, vx, vy, mass) }
@@ -555,7 +557,7 @@ impl World {
         let dt = real_dt.clamp(0.001, 0.05);
         self.t += dt;
         let t = self.t;
-        self.wind = 14.0 * (t / 41.0).sin() + 9.0 * (t / 17.0 + 1.3).sin() + 4.0 * (t / 5.3).sin();
+        self.wind = 5.0 * (t / 41.0).sin() + 3.0 * (t / 17.0 + 1.3).sin() + 1.5 * (t / 5.3).sin();
         let changed = match wins {
             Some(wins) => {
                 let changed = self.sync_windows(wins, all_ids);
@@ -645,10 +647,21 @@ impl World {
                 if self.particles.len() >= MAX_PARTICLES {
                     continue;
                 }
+                // Vlokken verschijnen vlak boven de plek waar ze landen, zodat er nooit
+                // sneeuw langs vensterranden of over het hele scherm naar beneden valt.
+                let Some((x, top)) = (0..8).find_map(|_| {
+                    let x = s.x + rnd(4.0, s.w - 4.0);
+                    let land = self.landing_spot(x)?;
+                    let top = (land - rnd(35.0, 90.0)).max(s.y + 2.0);
+                    self.clear_path(x, top, land).then_some((x, top))
+                }) else {
+                    continue;
+                };
                 let r = rnd(0.0, 1.0).powi(2) * 1.4 + 0.7;
                 self.particles.push(Particle {
-                    x: s.x + rnd(-80.0, s.w + 80.0),
-                    y: s.y - 6.0,
+                    x,
+                    y: top,
+                    age: 0.0,
                     vx: self.wind,
                     vy: 20.0,
                     mass: DEPOSIT * (self.speed / self.flake_mult) as f32,
@@ -660,6 +673,44 @@ impl World {
         }
     }
 
+    /// Het oppervlak waar een vlok op x als eerste op zou landen. Vlak naast een vensterrand
+    /// (of een stuk dat achter een ander venster zit) geeft None.
+    fn landing_spot(&self, x: f64) -> Option<f64> {
+        const MARGIN: usize = 25;
+        let mut best: Option<f64> = None;
+        for wp in &self.piles {
+            let p = &wp.pile;
+            let Some(i) = p.col(x) else { continue };
+            if !p.visible[i] {
+                continue;
+            }
+            let n = p.cells.len();
+            if i < MARGIN || i + MARGIN >= n || !p.visible[i - MARGIN] || !p.visible[i + MARGIN] {
+                return None;
+            }
+            let s = p.surface(i);
+            if best.is_none_or(|b| s < b) {
+                best = Some(s);
+            }
+        }
+        if best.is_none() {
+            for g in &self.grounds {
+                if let Some(i) = g.col(x) {
+                    return Some(g.surface(i));
+                }
+            }
+        }
+        best
+    }
+
+    /// Valt een vlok van `top` naar `land` zonder vlak langs of voor een venster te komen?
+    fn clear_path(&self, x: f64, top: f64, land: f64) -> bool {
+        const MARGIN: f64 = 25.0;
+        !self.piles.iter().map(|p| p.rect()).any(|r| {
+            x > r.x - MARGIN && x < r.x + r.w + MARGIN && r.y < land - 1.0 && r.y + r.h > top
+        })
+    }
+
     fn update_particles(&mut self, dt: f64) {
         let mut parts = std::mem::take(&mut self.particles);
         let mut keep = Vec::with_capacity(parts.len());
@@ -669,10 +720,11 @@ impl World {
         let left = self.screens.iter().map(|s| s.x).fold(f64::MAX, f64::min);
         let right = self.screens.iter().map(|s| s.x + s.w).fold(f64::MIN, f64::max);
         for mut p in parts.drain(..) {
+            p.age += dt;
             let y0 = p.y;
             match p.kind {
                 Kind::Flake => {
-                    let sway = (self.t * (0.9 + p.phase * 0.1) + p.phase).sin() * 16.0 / p.r;
+                    let sway = (self.t * (0.9 + p.phase * 0.1) + p.phase).sin() * 6.0 / p.r;
                     p.vx += (self.wind + sway - p.vx) * (2.0 * dt).min(1.0);
                     let term = 24.0 + p.r * 12.0;
                     p.vy += (term - p.vy) * (1.5 * dt).min(1.0);
@@ -919,6 +971,21 @@ mod tests {
         assert!(dropped_left, "sneeuw moet aan de achterkant (links) vallen");
         assert!(snow_on(&w) < before * 0.95, "{before} -> {}", snow_on(&w));
         assert!(snow_on(&w) > before * 0.3, "niet alles in één keer: {before} -> {}", snow_on(&w));
+    }
+
+    #[test]
+    fn no_flakes_beside_a_nearly_fullscreen_window() {
+        let mut w = World::new(vec![Rect::new(0.0, 0.0, 1600.0, 1000.0)]);
+        w.speed = 5.0;
+        let win = WinInfo { id: 1, x: 6.0, y: 33.0, w: 1588.0, h: 870.0 };
+        for _ in 0..(30 * 300) {
+            w.step(1.0 / 30.0, Some(vec![win]), &|| [1].into());
+            for p in w.particles.iter().filter(|p| p.kind == Kind::Flake) {
+                let beside = p.x < win.x + 20.0 || p.x > win.x + win.w - 20.0;
+                assert!(!(beside && p.y > win.y && p.y < win.y + win.h), "vlok langs de rand op ({:.0}, {:.0})", p.x, p.y);
+            }
+        }
+        assert!(w.piles[0].pile.total() > 0.0);
     }
 
     #[test]
