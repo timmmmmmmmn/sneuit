@@ -17,7 +17,7 @@ use objc2::runtime::AnyObject;
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSColor, NSControlStateValueOff,
-    NSControlStateValueOn, NSGraphicsContext, NSMenu, NSMenuItem, NSScreen, NSStatusBar, NSVariableStatusItemLength,
+    NSControlStateValueOn, NSGraphicsContext, NSImage, NSMenu, NSMenuItem, NSScreen, NSStatusBar, NSVariableStatusItemLength,
     NSView, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
@@ -336,7 +336,14 @@ fn main() {
     let controller = Controller::new(mtm);
     let item = NSStatusBar::systemStatusBar().statusItemWithLength(NSVariableStatusItemLength);
     if let Some(button) = item.button(mtm) {
-        button.setTitle(ns_string!("❄"));
+        // Het eigen logo uit de app-bundel; buiten de bundel (tijdens testen) een gewoon ❄.
+        match NSImage::imageNamed(ns_string!("menubar")) {
+            Some(img) => {
+                img.setSize(CGSize::new(18.0, 18.0));
+                button.setImage(Some(&img));
+            }
+            None => button.setTitle(ns_string!("❄")),
+        }
     }
     let menu = NSMenu::new(mtm);
     add_item(&menu, mtm, "Sneeuwman laten opruimen", sel!(summonSnowman:), &controller);
