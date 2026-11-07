@@ -12,14 +12,11 @@ pub const G: f64 = 900.0;
 /// Straal van de afgeronde vensterhoeken; sneeuw glijdt daar vanzelf vanaf.
 pub const CORNER: f32 = 14.0;
 
-/// Vlokken per punt schermbreedte per seconde.
-const FLAKES_PER_PX: f64 = 0.012;
+/// Vlokken per punt schermbreedte per seconde: het sneeuwt continu, maar heel zachtjes.
+const FLAKES_PER_PX: f64 = 0.004;
 /// Hoeveel sneeuw (punt²) één vlok achterlaat. Afgesteld zodat een venster pas na
 /// ongeveer een uur een hoopje van ~14 punten heeft.
-const DEPOSIT: f32 = 0.32;
-/// Het sneeuwt in buien: zo vaak sneeuwt het gemiddeld (zie `weather`), dus per vlok
-/// blijft er navenant meer liggen om toch op ongeveer een uur uit te komen.
-const SHOWER_SHARE: f32 = 0.38;
+const DEPOSIT: f32 = 0.96;
 /// Maximale helling (hoogteverschil per punt) voordat sneeuw gaat schuiven.
 const WIN_REPOSE: f32 = 1.0;
 const GROUND_REPOSE: f32 = 0.75;
@@ -101,8 +98,6 @@ pub struct Pile {
     walls: bool,
     spill: [f32; 2],
     spill_next: [f32; 2],
-    drip_acc: f32,
-    drip_next: f32,
     flip: bool,
     dirty: Option<(usize, usize)>,
     /// Zichtbare verandering die meteen getekend moet worden; kleine dingen mogen even wachten.
@@ -121,9 +116,7 @@ impl Pile {
             maxh: 0.0,
             walls,
             spill: [0.0; 2],
-            spill_next: [rnd(2.5, 6.0) as f32, rnd(2.5, 6.0) as f32],
-            drip_acc: 0.0,
-            drip_next: rnd(1.5, 3.5) as f32,
+            spill_next: [rnd(0.8, 2.5) as f32, rnd(0.8, 2.5) as f32],
             flip: false,
             dirty: None,
             urgent: false,
@@ -240,7 +233,9 @@ impl Pile {
     }
 
     /// Zwaartekracht: waar de helling te steil is schuift sneeuw naar beneden.
-    fn relax(&mut self, repose: f32, flow: f32) {
+    /// `tilt` > 0 laat sneeuw naar links schuiven (en < 0 naar rechts), zoals bij een venster
+    /// dat naar rechts wordt bewogen: door de traagheid blijft de sneeuw achter.
+    fn relax(&mut self, repose: f32, flow: f32, tilt: f32) {
         let n = self.cells.len();
         if n < 2 {
             return;
@@ -252,7 +247,7 @@ impl Pile {
                 let i = if fwd { k } else { n - 2 - k };
                 let a = self.cells[i] - self.bases[i];
                 let b = self.cells[i + 1] - self.bases[i + 1];
-                let d = a - b;
+                let d = a - b - tilt;
                 let m = if d > repose {
                     ((d - repose) * flow).min(self.cells[i])
                 } else if d < -repose {
@@ -273,7 +268,8 @@ impl Pile {
             }
         }
         self.flip = !self.flip;
-        if !self.walls {
+        // Alleen als het venster beweegt valt er sneeuw over de rand.
+        if !self.walls && tilt != 0.0 {
             for (side, idx) in [(0usize, 0usize), (1, n - 1)] {
                 let h = self.cells[idx];
                 if h > EDGE_HOLD {
@@ -339,43 +335,42 @@ impl Pile {
             let y = self.surface(idx) - 0.5;
             parts.push(Particle::clump(gx, y, dir * rnd(4.0, 22.0) + vx * 0.5, rnd(-5.0, 20.0), self.spill[side]));
             self.spill[side] = 0.0;
-            self.spill_next[side] = rnd(2.5, 6.0) as f32;
+            self.spill_next[side] = rnd(0.8, 2.5) as f32;
         }
     }
 
-    /// Als er te veel ligt druppelt er af en toe onopvallend een klein klontje vanaf een rand.
-    fn drip(&mut self, dt: f64, parts: &mut Vec<Particle>) {
+    /// Een bewegend venster: de sneeuw glijdt als geheel naar de achterkant en valt daar over
+    /// de rand. Hoe harder je sleept, hoe sneller.
+    fn slide(&mut self, tilt: f32, dt: f64) {
         let n = self.cells.len();
-        if n < 8 {
+        if self.walls || tilt.abs() < 1.0 || n < 2 {
             return;
         }
-        for c in &mut self.cells {
-            if *c > WIN_MAX {
-                self.drip_acc += *c - WIN_MAX;
-                *c = WIN_MAX;
+        let u = ((tilt.abs() - 0.5) * 0.2 * dt as f32 * 60.0).min(0.8);
+        if tilt > 0.0 {
+            for i in 0..n {
+                let m = self.cells[i] * u;
+                self.cells[i] -= m;
+                if i == 0 { self.spill[0] += m } else { self.cells[i - 1] += m }
+            }
+        } else {
+            for i in (0..n).rev() {
+                let m = self.cells[i] * u;
+                self.cells[i] -= m;
+                if i == n - 1 { self.spill[1] += m } else { self.cells[i + 1] += m }
             }
         }
+        self.mark_all();
+    }
+
+    /// Ligt er te veel, dan zakt de sneeuw ongemerkt wat in; er valt niets vanaf.
+    fn compact(&mut self, dt: f64) {
+        let n = self.cells.len();
         let mean = self.total() / n as f32;
-        if mean > WIN_COMFORT {
-            self.drip_acc += (mean - WIN_COMFORT) * 0.0025 * n as f32 * dt as f32;
+        let squeeze = if mean > WIN_COMFORT { (mean - WIN_COMFORT) / mean * 0.01 * dt as f32 } else { 0.0 };
+        for c in &mut self.cells {
+            *c = (*c - *c * squeeze).min(WIN_MAX);
         }
-        if self.drip_acc < self.drip_next {
-            return;
-        }
-        let left = fastrand::bool();
-        let range: Vec<usize> = if left { (0..8).collect() } else { (n - 8..n).collect() };
-        let avail: f32 = range.iter().map(|&i| self.cells[i]).sum();
-        let want = self.drip_next.min(avail * 0.5);
-        if want > 0.05 {
-            for &i in &range {
-                self.cells[i] -= self.cells[i] / avail * want;
-            }
-            let (gx, dir, idx) = if left { (self.x - 1.0, -1.0, 0) } else { (self.x + n as f64 + 1.0, 1.0, n - 1) };
-            parts.push(Particle::clump(gx, self.surface(idx), dir * rnd(2.0, 12.0), rnd(0.0, 15.0), want));
-            self.mark(range[0], range[7] + 1);
-        }
-        self.drip_acc = 0.0;
-        self.drip_next = rnd(1.5, 3.5) as f32;
     }
 }
 
@@ -386,11 +381,14 @@ pub struct WinPile {
     pub h: f64,
     hist: VecDeque<(f64, f64, f64)>,
     cooldown_until: f64,
+    /// Huidige horizontale snelheid en de "scheefstand" die de sneeuw daardoor voelt.
+    vx: f64,
+    tilt: f32,
 }
 
 impl WinPile {
     fn new(w: &WinInfo) -> Self {
-        WinPile { id: w.id, pile: Pile::new(w.x, w.y, w.w, false), h: w.h, hist: VecDeque::new(), cooldown_until: 0.0 }
+        WinPile { id: w.id, pile: Pile::new(w.x, w.y, w.w, false), h: w.h, hist: VecDeque::new(), cooldown_until: 0.0, vx: 0.0, tilt: 0.0 }
     }
 
     pub fn rect(&self) -> Rect {
@@ -450,6 +448,9 @@ impl WinPile {
             self.hist.pop_front();
         }
         let n = self.hist.len();
+        self.vx = if n >= 3 { Self::velocity(&self.hist, n - 3, n - 1).0 } else { 0.0 };
+        // Hoe sneller je sleept, hoe meer de sneeuw naar de achterkant schuift en eraf valt.
+        self.tilt = if self.vx.abs() < 150.0 { 0.0 } else { (self.vx / 250.0).clamp(-3.5, 3.5) as f32 };
         if n < 7 || t < self.cooldown_until || p.maxh < 0.3 {
             return;
         }
@@ -488,10 +489,6 @@ pub struct World {
     /// Vermenigvuldiger voor hoe snel sneeuw zich ophoopt (1 = rustig, een uur voor een hoopje).
     pub speed: f64,
     pub flake_mult: f64,
-    /// Hoe hard het nu sneeuwt (0 = droog, 1 = volle bui) en hoe lang de huidige fase nog duurt.
-    pub intensity: f64,
-    snowing: bool,
-    weather_left: f64,
     spawn_acc: Vec<f64>,
     event_timer: f64,
     frame: u64,
@@ -511,9 +508,6 @@ impl World {
             wind: 0.0,
             speed: 1.0,
             flake_mult: 1.0,
-            intensity: 0.0,
-            snowing: true,
-            weather_left: rnd(4.0, 8.0) * 60.0,
             spawn_acc: Vec::new(),
             event_timer: 0.0,
             frame: 0,
@@ -570,7 +564,6 @@ impl World {
             }
             None => false,
         };
-        self.weather(dt);
         self.spawn(dt);
         self.update_particles(dt);
         self.settle_piles(dt);
@@ -644,21 +637,9 @@ impl World {
         }
     }
 
-    /// Afwisselend buien van 4–8 minuten en droge periodes van 6–14 minuten, met een
-    /// rustige overgang zodat het geleidelijk begint en ophoudt.
-    fn weather(&mut self, dt: f64) {
-        self.weather_left -= dt;
-        if self.weather_left <= 0.0 {
-            self.snowing = !self.snowing;
-            self.weather_left = if self.snowing { rnd(4.0, 8.0) } else { rnd(6.0, 14.0) } * 60.0;
-        }
-        let target = if self.snowing || self.speed > 1.0 { 1.0 } else { 0.0 };
-        self.intensity += (target - self.intensity).clamp(-dt / 40.0, dt / 40.0);
-    }
-
     fn spawn(&mut self, dt: f64) {
         for (k, s) in self.screens.iter().enumerate() {
-            self.spawn_acc[k] += FLAKES_PER_PX * s.w * self.flake_mult * self.intensity * dt;
+            self.spawn_acc[k] += FLAKES_PER_PX * s.w * self.flake_mult * dt;
             while self.spawn_acc[k] >= 1.0 {
                 self.spawn_acc[k] -= 1.0;
                 if self.particles.len() >= MAX_PARTICLES {
@@ -670,7 +651,7 @@ impl World {
                     y: s.y - 6.0,
                     vx: self.wind,
                     vy: 20.0,
-                    mass: DEPOSIT * (self.speed / self.flake_mult) as f32 / if self.speed > 1.0 { 1.0 } else { SHOWER_SHARE },
+                    mass: DEPOSIT * (self.speed / self.flake_mult) as f32,
                     r,
                     kind: Kind::Flake,
                     phase: rnd(0.0, 2.0 * PI),
@@ -777,15 +758,16 @@ impl World {
         let slow_tick = self.frame % 6 == 0;
         for wp in &mut self.piles {
             let p = &mut wp.pile;
-            p.relax(WIN_REPOSE, 0.3);
-            p.emit_spills(0.0, &mut self.particles);
-            p.drip(dt, &mut self.particles);
+            p.slide(wp.tilt, dt);
+            p.relax(WIN_REPOSE, 0.3, wp.tilt);
+            p.emit_spills(wp.vx * 0.6, &mut self.particles);
+            p.compact(dt);
             if let Some(r) = p.take_dirty(slow_tick) {
                 self.dirty.push(r);
             }
         }
         for g in &mut self.grounds {
-            g.relax(GROUND_REPOSE, 0.3);
+            g.relax(GROUND_REPOSE, 0.3, 0.0);
             let mut changed = false;
             for c in &mut g.cells {
                 if *c > GROUND_COMFORT {
@@ -912,6 +894,31 @@ mod tests {
         eprintln!("gemiddeld/hoogst per kwartier: {at:?}");
         assert!(at[0].0 < 5.0, "na 15 min al te veel: {:?}", at[0]);
         assert!(at[3].0 > 9.0, "na een uur te weinig: {:?}", at[3]);
+    }
+
+    #[test]
+    fn nothing_falls_off_a_window_at_rest() {
+        let (mut w, win) = world_with_window();
+        w.speed = 5.0;
+        for _ in 0..(30 * 600) {
+            w.step(1.0 / 30.0, Some(vec![win]), &|| [1].into());
+            assert!(!w.particles.iter().any(|p| p.kind == Kind::Clump), "er viel sneeuw van een stilstaand venster");
+        }
+    }
+
+    #[test]
+    fn dragging_right_drops_snow_off_the_left_edge() {
+        let (mut w, mut win) = world_with_window();
+        let before = snow_on(&w);
+        let mut dropped_left = false;
+        for f in 0..60 {
+            win.x += if f % 3 == 0 { 0.0 } else { 18.0 };
+            w.step(1.0 / 30.0, Some(vec![win]), &|| [1].into());
+            dropped_left |= w.particles.iter().any(|p| p.kind == Kind::Clump && p.x < w.piles[0].pile.x);
+        }
+        assert!(dropped_left, "sneeuw moet aan de achterkant (links) vallen");
+        assert!(snow_on(&w) < before * 0.95, "{before} -> {}", snow_on(&w));
+        assert!(snow_on(&w) > before * 0.3, "niet alles in één keer: {before} -> {}", snow_on(&w));
     }
 
     #[test]
