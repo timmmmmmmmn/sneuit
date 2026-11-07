@@ -345,7 +345,7 @@ fn main() {
     add_item(&menu, mtm, "Alle sneeuw weghalen", sel!(clearSnow:), &controller);
     menu.addItem(&NSMenuItem::separatorItem(mtm));
     let quit = unsafe {
-        NSMenuItem::initWithTitle_action_keyEquivalent(mtm.alloc(), ns_string!("Stop Sneeuw"), Some(sel!(terminate:)), ns_string!("q"))
+        NSMenuItem::initWithTitle_action_keyEquivalent(mtm.alloc(), ns_string!("Stop Sneuit"), Some(sel!(terminate:)), ns_string!("q"))
     };
     menu.addItem(&quit);
     item.setMenu(Some(&menu));

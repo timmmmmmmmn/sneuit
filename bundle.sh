@@ -1,19 +1,19 @@
 #!/bin/sh
-# Bouwt Sneeuw.app (zonder Dock-icoon) in target/.
+# Bouwt Sneuit.app (zonder Dock-icoon) in target/.
 set -e
 cd "$(dirname "$0")"
 cargo build --release
-APP=target/Sneeuw.app
+APP=target/Sneuit.app
 mkdir -p "$APP/Contents/MacOS"
-cp target/release/sneeuw "$APP/Contents/MacOS/sneeuw"
+cp target/release/sneeuw "$APP/Contents/MacOS/sneuit"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Sneeuw</string>
-  <key>CFBundleIdentifier</key><string>nl.timvanbergen.sneeuw</string>
-  <key>CFBundleExecutable</key><string>sneeuw</string>
+  <key>CFBundleName</key><string>Sneuit</string>
+  <key>CFBundleIdentifier</key><string>nl.timvanbergen.sneuit</string>
+  <key>CFBundleExecutable</key><string>sneuit</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
