@@ -5,9 +5,10 @@ use std::f64::consts::PI;
 
 use crate::world::{rnd, Particle, Pile, Rect, G};
 
-/// Na hoeveel seconden een gebouwde sneeuwpop begint te smelten, en hoe lang dat duurt.
-const MELT_START: f64 = 7.0 * 60.0;
-const MELT_TIME: f64 = 3.0 * 60.0;
+/// Een gebouwde sneeuwpop blijft nooit staan: zodra het jongetje wegloopt smelt hij
+/// binnen een halve minuut terug in de sneeuw.
+const MELT_START: f64 = 5.0;
+const MELT_TIME: f64 = 30.0;
 
 pub struct Snowman {
     pub x: f64,
@@ -452,5 +453,29 @@ impl Actors {
             }
             true
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snowman_never_stays() {
+        let sc = Rect::new(0.0, 0.0, 1200.0, 800.0);
+        let mut grounds = vec![Pile::new(sc.x, sc.y + sc.h, sc.w, true)];
+        for c in &mut grounds[0].cells {
+            *c = 12.0;
+        }
+        let mut a = Actors::default();
+        a.summon_boy(0, &sc);
+        let (mut parts, mut dirty) = (Vec::new(), Vec::new());
+        let mut built = false;
+        for _ in 0..(30 * 240) {
+            a.update(1.0 / 30.0, &mut grounds, &[sc], &mut parts, &mut dirty);
+            built |= !a.snowmen.is_empty();
+        }
+        assert!(built, "het jongetje had een sneeuwpop moeten bouwen");
+        assert!(a.boy.is_none() && a.snowmen.is_empty(), "er staat nog een sneeuwpop");
     }
 }
